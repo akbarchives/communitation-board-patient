@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { supabase } from './lib/supabase'
 
 const categories = ref([])
@@ -8,6 +8,43 @@ const isLoading = ref(true)
 const isEditMode = ref(false)
 const activeBanner = ref(null)
 const lastSpeech = ref('')
+
+// State untuk Fitur Keyboard Alfabet (A-Z tanpa angka)
+const showKeyboard = ref(false)
+const spelledText = ref('')
+const isQwertyLayout = ref(false) // Default urut abjad A-Z (lebih mudah untuk pasien)
+
+const alphabetAZ = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')
+const alphabetQWERTY = 'QWERTYUIOPASDFGHJKLZXCVBNM'.split('')
+
+const currentLetters = computed(() =>
+  isQwertyLayout.value ? alphabetQWERTY : alphabetAZ
+)
+
+function pressLetter(letter) {
+  spelledText.value += letter
+}
+
+function addSpace() {
+  if (spelledText.value.length > 0 && !spelledText.value.endsWith(' ')) {
+    spelledText.value += ' '
+  }
+}
+
+function backspaceLetter() {
+  spelledText.value = spelledText.value.slice(0, -1)
+}
+
+function clearSpelledText() {
+  spelledText.value = ''
+}
+
+function speakSpelledText() {
+  const clean = spelledText.value.trim()
+  if (!clean) return
+  // Ubah ke huruf kecil saat dibaca TTS agar dibaca sebagai kata utuh (bukan dieja per huruf kapital)
+  triggerAction(clean, '🔤', clean.toLowerCase(), '#0284c7')
+}
 
 // Pilihan palet warna kontras tinggi untuk kategori
 const colorOptions = [
@@ -97,7 +134,6 @@ async function saveCategory() {
   if (!cleanTitle) return
 
   if (isEditingCategory.value) {
-    // UPDATE kategori yang sudah ada
     const { error } = await supabase
       .from('categories')
       .update({
@@ -112,7 +148,6 @@ async function saveCategory() {
       return
     }
   } else {
-    // CREATE kategori baru (buat slug ID unik)
     const slugId =
       cleanTitle
         .toLowerCase()
@@ -148,7 +183,6 @@ function openDeleteCategoryModal(cat) {
 
 async function confirmDeleteCategory() {
   if (!categoryToDelete.value) return
-  // Wajib sama persis (case-insensitive) dengan nama kategori
   if (
     deleteConfirmInput.value.trim().toLowerCase() !==
     categoryToDelete.value.title.trim().toLowerCase()
@@ -251,6 +285,14 @@ onMounted(() => {
         <span class="q-icon">🆘</span>
         <span>TOLONG</span>
       </button>
+      <button
+        class="q-btn q-keyboard"
+        :class="{ active: showKeyboard }"
+        @click="showKeyboard = !showKeyboard"
+      >
+        <span class="q-icon">🔤</span>
+        <span>{{ showKeyboard ? 'TUTUP' : 'EJA' }}</span>
+      </button>
       <button class="q-btn q-repeat" @click="repeatLastSpeech" :disabled="!lastSpeech">
         <span class="q-icon">🔊</span>
         <span>ULANGI</span>
@@ -268,7 +310,57 @@ onMounted(() => {
 
     <!-- AREA UTAMA -->
     <main class="board-area">
-      <div v-if="isLoading" class="loading-box">Memuat Papan Komunikasi...</div>
+      <!-- MODE 0: KEYBOARD ALFABET A-Z (TANPA ANGKA) -->
+      <div v-if="showKeyboard" class="keyboard-view">
+        <div class="kb-top-bar">
+          <button class="back-btn" @click="showKeyboard = false">
+            ⬅️ KEMBALI
+          </button>
+
+          <div class="spelled-display">
+            <span v-if="spelledText">{{ spelledText }}</span>
+            <span v-else class="spelled-placeholder">Sentuh huruf di bawah untuk mengeja...</span>
+          </div>
+
+          <button
+            class="layout-toggle-btn"
+            @click="isQwertyLayout = !isQwertyLayout"
+            title="Ganti Urutan Huruf"
+          >
+            {{ isQwertyLayout ? 'Urut A-Z' : 'QWERTY' }}
+          </button>
+        </div>
+
+        <!-- BARIS KENDALI KATA -->
+        <div class="kb-controls">
+          <button class="kb-ctrl-btn space" @click="addSpace">
+            ⎵ SPASI
+          </button>
+          <button class="kb-ctrl-btn backspace" @click="backspaceLetter" :disabled="!spelledText">
+            ⌫ HAPUS 1 HURUF
+          </button>
+          <button class="kb-ctrl-btn clear" @click="clearSpelledText" :disabled="!spelledText">
+            🗑️ HAPUS SEMUA
+          </button>
+          <button class="kb-ctrl-btn speak" @click="speakSpelledText" :disabled="!spelledText.trim()">
+            🔊 UCAPKAN
+          </button>
+        </div>
+
+        <!-- GRID 26 HURUF ALFABET (TANPA ANGKA) -->
+        <div class="alphabet-grid">
+          <button
+            v-for="letter in currentLetters"
+            :key="letter"
+            class="letter-key"
+            @click="pressLetter(letter)"
+          >
+            {{ letter }}
+          </button>
+        </div>
+      </div>
+
+      <div v-else-if="isLoading" class="loading-box">Memuat Papan Komunikasi...</div>
 
       <!-- TAMPILAN 1: GRID KATEGORI UTAMA -->
       <div v-else-if="!activeCategory" class="category-grid">
@@ -279,7 +371,6 @@ onMounted(() => {
           @click="activeCategory = cat"
           :style="{ backgroundColor: cat.color }"
         >
-          <!-- Tombol Edit & Hapus Kategori (Muncul hanya saat Mode Edit aktif) -->
           <div v-if="isEditMode" class="cat-edit-actions" @click.stop>
             <button class="cat-action-btn edit" @click="openEditCategoryModal(cat)" title="Edit Kategori">
               ✏️ Edit
@@ -293,7 +384,6 @@ onMounted(() => {
           <span class="cat-title">{{ cat.title }}</span>
         </div>
 
-        <!-- KARTU TAMBAH KATEGORI BARU (Muncul saat Mode Edit aktif) -->
         <button v-if="isEditMode" class="cat-card add-cat-card" @click="openAddCategoryModal">
           <span class="cat-icon">➕</span>
           <span class="cat-title">Tambah Kategori</span>
@@ -311,7 +401,6 @@ onMounted(() => {
             <span>{{ activeCategory.title }}</span>
           </div>
 
-          <!-- Shortcut Edit Kategori dari dalam sub-halaman -->
           <button
             v-if="isEditMode"
             class="header-edit-cat-btn"
@@ -425,7 +514,7 @@ onMounted(() => {
       </div>
     </div>
 
-    <!-- OVERLAY KONFIRMASI LAYAR PENUH SAAT ITEM DIKLIK -->
+    <!-- OVERLAY KONFIRMASI LAYAR PENUH SAAT ITEM / KALIMAT DIKLIK -->
     <div v-if="activeBanner" class="confirm-overlay" @click="activeBanner = null">
       <div class="confirm-box" :style="{ borderColor: activeBanner.color }" @click.stop>
         <div class="confirm-icon">{{ activeBanner.icon }}</div>
@@ -465,11 +554,11 @@ body, html {
   gap: 10px;
 }
 
-/* BARIS TOMBOL CEPAT ATAS */
+/* BARIS TOMBOL CEPAT ATAS (6 TOMBOL) */
 .quick-bar {
   display: grid;
-  grid-template-columns: 1.2fr 1.2fr 1.2fr 1fr 0.7fr;
-  gap: 8px;
+  grid-template-columns: 1.15fr 1.15fr 1.15fr 1fr 0.9fr 0.75fr;
+  gap: 6px;
   height: 76px;
   flex-shrink: 0;
 }
@@ -483,7 +572,7 @@ body, html {
   border-radius: 14px;
   color: white;
   font-weight: 800;
-  font-size: clamp(13px, 1.8vw, 18px);
+  font-size: clamp(12px, 1.7vw, 17px);
   cursor: pointer;
   box-shadow: 0 3px 6px rgba(0, 0, 0, 0.12);
   transition: transform 0.1s;
@@ -494,13 +583,15 @@ body, html {
 }
 
 .q-icon {
-  font-size: clamp(20px, 2.5vw, 26px);
+  font-size: clamp(19px, 2.4vw, 25px);
   line-height: 1.1;
 }
 
 .q-yes { background-color: #16a34a; }
 .q-no { background-color: #dc2626; }
 .q-help { background-color: #ea580c; }
+.q-keyboard { background-color: #7c3aed; }
+.q-keyboard.active { background-color: #4c1d95; outline: 3px solid #c4b5fd; }
 .q-repeat { background-color: #0284c7; }
 .q-repeat:disabled { background-color: #94a3b8; opacity: 0.6; }
 .q-lock { background-color: #334155; }
@@ -511,6 +602,127 @@ body, html {
   flex: 1;
   display: flex;
   flex-direction: column;
+}
+
+/* =========================================
+   KEYBOARD ALFABET (A-Z TANPA ANGKA)
+   ========================================= */
+.keyboard-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.kb-top-bar {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  min-height: 68px;
+}
+
+.spelled-display {
+  flex: 1;
+  background: white;
+  border: 4px solid #7c3aed;
+  border-radius: 16px;
+  padding: 12px 18px;
+  display: flex;
+  align-items: center;
+  font-size: clamp(24px, 3.6vw, 40px);
+  font-weight: 900;
+  letter-spacing: 2px;
+  color: #0f172a;
+  word-break: break-word;
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.06);
+}
+
+.spelled-placeholder {
+  font-size: clamp(15px, 2vw, 20px);
+  font-weight: 600;
+  letter-spacing: normal;
+  color: #94a3b8;
+}
+
+.layout-toggle-btn {
+  background: #e2e8f0;
+  color: #0f172a;
+  border: 2px solid #cbd5e1;
+  border-radius: 14px;
+  padding: 0 16px;
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.kb-controls {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  height: 62px;
+}
+
+.kb-ctrl-btn {
+  border: none;
+  border-radius: 14px;
+  font-size: clamp(13px, 1.8vw, 18px);
+  font-weight: 800;
+  color: white;
+  cursor: pointer;
+  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.1);
+}
+
+.kb-ctrl-btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.kb-ctrl-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.kb-ctrl-btn.space { background: #475569; }
+.kb-ctrl-btn.backspace { background: #d97706; }
+.kb-ctrl-btn.clear { background: #dc2626; }
+.kb-ctrl-btn.speak { background: #16a34a; }
+
+.alphabet-grid {
+  flex: 1;
+  display: grid;
+  /* HP Portrait: 5 kolom x 6 baris */
+  grid-template-columns: repeat(5, 1fr);
+  grid-auto-rows: 1fr;
+  gap: 8px;
+}
+
+/* Tablet & Layar Lebar: 7 kolom x 4 baris agar tombol ekstra besar */
+@media (min-width: 768px) {
+  .alphabet-grid {
+    grid-template-columns: repeat(7, 1fr);
+    gap: 12px;
+  }
+}
+
+.letter-key {
+  background: white;
+  border: 3px solid #cbd5e1;
+  border-bottom-width: 6px;
+  border-radius: 16px;
+  font-size: clamp(28px, 4.2vw, 48px);
+  font-weight: 900;
+  color: #0f172a;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.08s, background-color 0.1s;
+  user-select: none;
+}
+
+.letter-key:active {
+  transform: scale(0.94);
+  background-color: #ede9fe;
+  border-color: #7c3aed;
 }
 
 .loading-box {
@@ -631,10 +843,11 @@ body, html {
   color: white;
   border: none;
   border-radius: 12px;
-  padding: 14px 22px;
-  font-size: clamp(16px, 2vw, 22px);
+  padding: 14px 20px;
+  font-size: clamp(15px, 2vw, 20px);
   font-weight: 800;
   cursor: pointer;
+  flex-shrink: 0;
 }
 
 .sub-heading {
